@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Student Task Manager</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body {
+            background-color: #f0cdcf;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+        }
+
+        #auth-section, #task-section {
+            background-color: rgb(229, 222, 244);
+            border: 5px solid rgb(105, 6, 49);
+            border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+            max-width: 450px;
+            padding: 30px;
+        }
+
+        .header-title {
+            color: rgb(105, 6, 49);
+            font-weight: bold;
+            border-bottom: 2px solid rgba(105, 6, 49, 0.2);
+            padding-bottom: 10px;
+            text-align: center;
+            margin-bottom: 20px;
+        }
+
+        .btn-main {
+            background-color: #b91a84;
+            color: white;
+            border: none;
+            position: relative;
+        }
+
+        .btn-main:hover {
+            background-color: #9c146e;
+            color: white;
+        }
+
+        .btn-main:disabled {
+            background-color: #9c146e;
+            opacity: 0.8;
+            cursor: not-allowed;
+        }
+
+        .task-item {
+            border-left: 5px solid #b91a84;
+            margin-bottom: 8px;
+            border-radius: 8px !important;
+            background: white;
+            padding: 12px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+            transition: all 0.3s ease;
+        }
+
+        .task-item.completed span {
+            text-decoration: line-through;
+            color: #6c757d;
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        .db-badge {
+            position: fixed;
+            bottom: 10px;
+            right: 10px;
+            font-size: 0.8rem;
+        }
+
+        .spinner {
+            display: inline-block;
+            width: 1rem;
+            height: 1rem;
+            border: 2px solid rgba(255,255,255,.3);
+            border-radius: 50%;
+            border-top-color: #fff;
+            animation: spin 1s ease-in-out infinite;
+            margin-right: 5px;
+            vertical-align: middle;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        #task-list-loading {
+            text-align: center;
+            padding: 20px;
+            color: rgb(105, 6, 49);
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Auth Section -->
+    <div id="auth-section" class="container">
+        <h3 class="header-title" id="auth-title">Login</h3>
+        <form id="auth-form">
+            <div class="mb-3">
+                <input type="text" id="username" class="form-control" placeholder="Username" required>
+            </div>
+            <div class="mb-3">
+                <input type="password" id="password" class="form-control" placeholder="Password" required>
+            </div>
+            <button type="submit" class="btn btn-main w-100" id="auth-btn">
+                <span id="auth-btn-text">Sign In</span>
+            </button>
+            <p class="text-center mt-3">
+                <a href="#" id="toggle-auth" style="color: #b91a84; text-decoration: none;">Don't have an account? Register</a>
+            </p>
+        </form>
+    </div>
+
+    <!-- Task Section -->
+    <div id="task-section" class="container hidden">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h4 class="m-0" style="color: rgb(105, 6, 49);">Hi, <span id="display-user"></span>!</h4>
+            <button id="logout-btn" class="btn btn-outline-danger btn-sm" onclick="logout()">
+                <span>Logout</span>
+            </button>
+        </div>
+
+        <form id="task-form" class="input-group mb-4">
+            <input type="text" id="task-input" class="form-control" placeholder="What needs to be done?" required>
+            <button type="submit" class="btn btn-main" id="add-task-btn">
+                <span id="add-btn-text">Add</span>
+            </button>
+        </form>
+
+        <div id="task-list"></div>
+    </div>
+
+    <!-- DB Diagnostic Badge -->
+    <div class="db-badge">
+        <span class="badge {{ 'bg-success' if db_status == 'Connected' else 'bg-danger' }}">
+            DB: {{ db_status }}
+        </span>
+    </div>
+
+    <script>
+        const API_URL = '';
+        let isLogin = true;
+
+        function setLoading(btnId, isLoading, originalText, spinnerColor = "#fff") {
+            const btn = document.getElementById(btnId);
+            const textSpan = btn.querySelector('span');
+            if (isLoading) {
+                btn.disabled = true;
+                textSpan.innerHTML = `<div class="spinner" style="border-top-color: ${spinnerColor}"></div> Processing...`;
+            } else {
+                btn.disabled = false;
+                textSpan.innerText = originalText;
+            }
+        }
+
+        document.getElementById('toggle-auth').addEventListener('click', (e) => {
+            e.preventDefault();
+            isLogin = !isLogin;
+            document.getElementById('auth-title').innerText = isLogin ? 'Login' : 'Register';
+            document.getElementById('auth-btn-text').innerText = isLogin ? 'Sign In' : 'Create Account';
+            document.getElementById('toggle-auth').innerText = isLogin ? "Don't have an account? Register" : "Already have an account? Login";
+        });
+
+        document.getElementById('auth-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+            const endpoint = isLogin ? '/login' : '/register';
+            const originalText = isLogin ? 'Sign In' : 'Create Account';
+
+            setLoading('auth-btn', true, originalText);
+
+            try {
+                const response = await fetch(endpoint, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password })
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    if (isLogin) {
+                        localStorage.setItem('currentUser', JSON.stringify(data));
+                        showDashboard();
+                    } else {
+                        alert("Registration successful! Please login.");
+                        location.reload();
+                    }
+                } else {
+                    alert(data.error || "Authentication failed");
+                }
+            } catch (err) {
+                alert("Server connection error.");
+            } finally {
+                setLoading('auth-btn', false, originalText);
+            }
+        });
+
+        function showDashboard() {
+            const user = JSON.parse(localStorage.getItem('currentUser'));
+            if (!user) return;
+
+            document.getElementById('auth-section').classList.add('hidden');
+            document.getElementById('task-section').classList.remove('hidden');
+            document.getElementById('display-user').innerText = user.username;
+            fetchTasks(user.id);
+        }
+
+        async function fetchTasks(userId) {
+            const list = document.getElementById('task-list');
+            list.innerHTML = `<div id="task-list-loading"><div class="spinner" style="border-top-color: rgb(105, 6, 49)"></div> Fetching tasks...</div>`;
+
+            try {
+                const response = await fetch(`/tasks/${userId}`);
+                const tasks = await response.json();
+                list.innerHTML = '';
+
+                if (tasks.length === 0) {
+                    list.innerHTML = '<p class="text-center text-muted">No tasks yet.</p>';
+                    return;
+                }
+
+                tasks.forEach(task => {
+                    renderTaskItem(task, list);
+                });
+            } catch (err) {
+                list.innerHTML = '<p class="text-center text-danger">Failed to load tasks.</p>';
+            }
+        }
+
+        // Helper to create and append a task item to the DOM
+        function renderTaskItem(task, container) {
+            const item = document.createElement('div');
+            item.className = `task-item ${task.status === 'completed' ? 'completed' : ''}`;
+            item.id = `task-${task.id}`;
+
+            const actionIcon = task.status === 'completed' ? '↺' : '✓';
+            const actionTitle = task.status === 'completed' ? 'Undo Completion' : 'Mark as Done';
+
+            item.innerHTML = `
+                <span>${task.title}</span>
+                <div class="action-group">
+                    <button class="btn btn-sm btn-light border me-1 action-btn-toggle" onclick="toggleTask(${task.id}, this)" title="${actionTitle}">${actionIcon}</button>
+                    <button class="btn btn-sm btn-outline-danger action-btn-delete" onclick="deleteTask(${task.id}, this)" title="Delete Task">×</button>
+                </div>
+            `;
+            container.appendChild(item);
+        }
+
+        document.getElementById('task-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const input = document.getElementById('task-input');
+            const user = JSON.parse(localStorage.getItem('currentUser'));
+
+            setLoading('add-task-btn', true, 'Add');
+
+            try {
+                const response = await fetch('/tasks', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ title: input.value, user_id: user.id })
+                });
+
+                if (response.ok) {
+                    const newTask = await response.json();
+                    input.value = '';
+                    // Dynamically prepend new task without full refresh
+                    const list = document.getElementById('task-list');
+                    if (list.querySelector('.text-muted')) list.innerHTML = ''; // Clear empty message
+
+                    const tempDiv = document.createElement('div');
+                    renderTaskItem(newTask, tempDiv);
+                    list.insertBefore(tempDiv.firstChild, list.firstChild);
+                }
+            } finally {
+                setLoading('add-task-btn', false, 'Add');
+            }
+        });
+
+        async function toggleTask(id, btn) {
+            const item = document.getElementById(`task-${id}`);
+            const isCompleted = item.classList.contains('completed');
+            const originalHtml = btn.innerHTML;
+
+            btn.disabled = true;
+            btn.innerHTML = `<div class="spinner" style="border-top-color: #b91a84; border-width: 1px; margin-right: 0;"></div>`;
+
+            const newStatus = isCompleted ? 'pending' : 'completed';
+            try {
+                const response = await fetch(`/tasks/${id}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ status: newStatus })
+                });
+
+                if (response.ok) {
+                    // Update ONLY the respected row
+                    item.classList.toggle('completed');
+                    btn.innerHTML = isCompleted ? '✓' : '↺';
+                    btn.title = isCompleted ? 'Mark as Done' : 'Undo Completion';
+
+                    // Update onclick handler with new state logic if needed (not needed here since we read from class)
+                }
+            } catch (err) {
+                btn.innerHTML = originalHtml;
+            } finally {
+                btn.disabled = false;
+            }
+        }
+
+        async function deleteTask(id, btn) {
+            if(!confirm("Are you sure?")) return;
+            const item = document.getElementById(`task-${id}`);
+            const originalHtml = btn.innerHTML;
+
+            btn.disabled = true;
+            btn.innerHTML = `<div class="spinner" style="border-top-color: #dc3545; border-width: 1px; margin-right: 0;"></div>`;
+
+            try {
+                const response = await fetch(`/tasks/${id}`, { method: 'DELETE' });
+                if (response.ok) {
+                    // Remove ONLY the respected row from the DOM
+                    item.style.opacity = '0';
+                    item.style.transform = 'translateX(20px)';
+                    setTimeout(() => {
+                        item.remove();
+                        const list = document.getElementById('task-list');
+                        if (list.children.length === 0) {
+                            list.innerHTML = '<p class="text-center text-muted">No tasks yet.</p>';
+                        }
+                    }, 300);
+                }
+            } catch (err) {
+                btn.disabled = false;
+                btn.innerHTML = originalHtml;
+            }
+        }
+
+        function logout() {
+            const btn = document.getElementById('logout-btn');
+            btn.disabled = true;
+            btn.innerHTML = `<div class="spinner" style="border-top-color: #dc3545; border-width: 1px; margin-right: 0;"></div>`;
+            setTimeout(() => {
+                localStorage.removeItem('currentUser');
+                location.reload();
+            }, 600);
+        }
+
+        window.onload = () => {
+            if (localStorage.getItem('currentUser')) showDashboard();
+        };
+    </script>
+</body>
+</html>
